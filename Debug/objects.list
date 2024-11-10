@@ -1,6 +1,7 @@
 "./Core/Src/i2c-lcd.o"
 "./Core/Src/liquidcrystal_i2c.o"
 "./Core/Src/main.o"
+"./Core/Src/main2.o"
 "./Core/Src/stm32g4xx_hal_msp.o"
 "./Core/Src/stm32g4xx_it.o"
 "./Core/Src/syscalls.o"

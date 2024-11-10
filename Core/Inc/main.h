@@ -49,8 +49,6 @@ extern "C" {
 
 /* USER CODE END EM */
 
-void HAL_TIM_MspPostInit(TIM_HandleTypeDef *htim);
-
 /* Exported functions prototypes ---------------------------------------------*/
 void Error_Handler(void);
 
@@ -73,7 +71,17 @@ void Error_Handler(void);
 #define LD2_GPIO_Port GPIOB
 
 /* USER CODE BEGIN Private defines */
+/* Definitions of data related to this example */
+  /* Full-scale digital value with a resolution of 12 bits (voltage range     */
+  /* determined by analog voltage references Vref+ and Vref-,                 */
+  /* refer to reference manual).                                              */
+  #define DIGITAL_SCALE_12BITS             ((uint32_t) 0xFFF)
 
+  /* Init variable out of ADC expected conversion data range */
+  #define VAR_CONVERTED_DATA_INIT_VALUE    (DIGITAL_SCALE_12BITS + 1)
+
+  /* Definition of ADCx conversions data table size */
+  #define ADC_CONVERTED_DATA_BUFFER_SIZE   ((uint32_t)  64)
 /* USER CODE END Private defines */
 
 #ifdef __cplusplus

@@ -35,11 +35,15 @@ void lcd_send_data (char data)
 }
 
 
-/*void HAL_I2C_TxHalfCapltCallback(I2C_HandleTypeDef* hi2c)
+void HAL_I2C_MasterTxCpltCallback(I2C_HandleTypeDef* hi2c)
 {
-	HAL_I2C_Master_Transmit_DMA(&hi2c1, SLAVE_ADDRESS_LCD, (uint8_t *) data_t, 4);
-}*/
+//	Tx DONE... Do nothing
+}
 
+/*void HAL_I2C_MasterRxCpltCallback (I2C_HandleTypeDef * hi2c)
+{
+  // RX Done .. Do Something!
+}*/
 
 void lcd_clear (void)
 {

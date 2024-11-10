@@ -63,9 +63,14 @@ DMA_HandleTypeDef hdma_tim1_ch1;
 DMA_HandleTypeDef hdma_tim1_ch2;
 
 UART_HandleTypeDef huart2;
+DMA_HandleTypeDef hdma_usart2_rx;
+DMA_HandleTypeDef hdma_usart2_tx;
 
 /* USER CODE BEGIN PV */
+__IO uint16_t   aADCxConvertedData[ADC_CONVERTED_DATA_BUFFER_SIZE]; /* ADC conversion results table of regular group, channel on rank1 */
+__IO uint16_t   uhADCxConvertedData_Injected;                        /* ADC conversion result of injected group, channel on rank1 */
 
+__IO uint16_t   uhADCxConvertedData_Regular_Avg;       /* The average of the ADC conversion results table of regular group, channel on rank1 */
 
 /* USER CODE END PV */
 
@@ -81,20 +86,21 @@ static void MX_DAC1_Init(void);
 static void MX_TIM2_Init(void);
 static void MX_I2C1_Init(void);
 /* USER CODE BEGIN PFP */
-void blinkLED ();
-char *scanInp(void);
-void startSpeaker(bool start);
-float *calTime(void);
-float *delta_T_alg (float pulseW);
-float *getTemp(void);
-void startSineW(bool start);
-void lcd_disp(void);
+void blinkLED ();								//blink the led function
+char *scanInp(void);							//scan user input to toggle the state machine
+//void startSpeaker(bool start);			//start speaker function for pwm squared wave output.  replaced by dac sine wave.
+float *calTime(void);						//calculate the time delay, currently not in used
+float *delta_T_alg (float pulseW);		//calculatae the delta T using a paper's algorithm, but it is not very useful
+float *getTemp(void);						//adc calculate temperature
+void startSineW(bool start);				//start the dac sinewave
+void lcd_disp(void);							//lcd display
+void adc_dma(void);						//adc dma
 
 #define PUTCHAR_PROTOTYPE int __io_putchar(int ch)
 #define __USE_C99_MATH
 
 //data buffer for rising and falling DMA
-#define numval 1000
+#define numval 50
 #define TIMCLOCK 170000000
 #define PSCALAR 16
 #define MIN(a,b) ((a) < (b) ? (a) : (b))
@@ -113,18 +119,18 @@ int isMeasured = 0;
 //parameter for pulse width cal
 volatile uint16_t tim1, tim2;
 uint8_t IsFirstCaptured = 0;
-float timeFactor = 5.882;//100;  //100ns per tick when fclk = 10Mhz// 5.882ns/tick if 170Mhz clock
+float timeFactor = 5.882;			//100;  //100ns per tick when fclk = 10Mhz// 5.882ns/tick if 170Mhz clock
 volatile uint16_t *deltaT = 0;
 float pulseW = 0;
 
-float dist = 0.2; // dist = 0.2m
-float freq = 25000;  //25khz
-float cal_val = 0;
-float v_sound = 343; // speed of sound  is 343m/s, will need to incorporate temperature here,  c = 331+0.61T,
-float lambda = 0;
-float temp = 0;
-float pathDiff = 0;  //k = 0.7288 , d/lambda,  if d=0.2m, k=22.75,  *made pathDiff to 1 eliminated for testing, k=0.881 by experiment
-float windspeed = 0;
+#define DIST  0.01 					// dist = 0.01m
+#define FREQ 25000  				//25khz
+float cal_val = 0;						//calibrated value - usually its the path difference.
+float v_sound = 343; 				// speed of sound  is 343m/s, will need to incorporate temperature here,  c = 331+0.61T,
+float lambda = 0;						//wavelength of the sound depending on temperature
+float temp = 0;							//temperature of the air
+float pathDiff = 0;  					//k = 0.7288 , d/lambda,  if d=0.2m, k=22.75,  *made pathDiff to 1 eliminated for testing, k=0.881 by experiment
+float windspeed = 0;					// the wind velocity
 
 
 //code for getchar and putchar properly display
@@ -144,6 +150,54 @@ void blinkLED ()
 	HAL_GPIO_TogglePin(LD2_GPIO_Port, LD2_Pin);
 	HAL_Delay(500);
 	return;
+}
+//usart in dma mode
+uint8_t RxData[1];
+int HTC = 0, FTC = 0;
+
+char inp;
+
+void HAL_UART_RxHalfCpltCallback(UART_HandleTypeDef *huart)
+{
+	HTC=1;  // half transfer complete callback was called
+	FTC=0;
+}
+void HAL_UART_RxCpltCallback(UART_HandleTypeDef *huart)
+{
+	  HTC=0;
+	  FTC=1;
+}
+
+void uart_dma(void);
+void uart_dma(void)
+{
+	HAL_UARTEx_ReceiveToIdle_DMA(&huart2, RxData, 1);
+	HAL_UART_Transmit_DMA(&huart2, RxData, 1);
+
+/*	    if (HTC==1)
+	    {
+	      HTC = 0;
+	      HAL_UART_DMAStop(&huart2);
+	      //HAL_UART_Receive_DMA(&huart2, RxData, 1);
+	      HAL_UARTEx_ReceiveToIdle_DMA(&huart2, RxData, 1);
+	    }
+
+	  else if (FTC==1)
+	  {
+	     FTC = 0;
+	     HAL_UART_DMAStop(&huart2);
+	    // HAL_UART_Receive_DMA(&huart2, RxData, 1);
+	     HAL_UARTEx_ReceiveToIdle_DMA(&huart2, RxData, 1);
+	  }
+	  else
+	  	  {
+	  		  HTC = 0;
+	  		  FTC = 0;
+	  		  HAL_UART_DMAStop(&huart2);
+	  		  //HAL_UART_Receive_DMA(&huart2, RxData, 1);
+	  		HAL_UARTEx_ReceiveToIdle_DMA(&huart2, RxData, 1);
+	  	  }*/
+	    inp = RxData[0];
 }
 
 // using putchar and getchar
@@ -172,16 +226,19 @@ char *scanInp(void)
 }*/
 
 //put char prototype for printf function
-PUTCHAR_PROTOTYPE
+/*
+
+ PUTCHAR_PROTOTYPE
 {
-  /* Place your implementation of fputc here */
-  /* e.g. write a character to the USART1 and Loop until the end of transmission */
+   //Place your implementation of fputc here
+  // e.g. write a character to the USART1 and Loop until the end of transmission
   HAL_UART_Transmit(&huart2, (uint8_t *)&ch, 1, 0xFFFF);  //use dma to speed it up
 //	HAL_UART_Transmit_DMA(&huart2, (uint8_t *)&ch, 1);
   return ch;
 }
 
-/*prototype for scanf function*************************************************/
+//prototype for scanf function************************************************
+
 #ifdef __GNUC__
 #define GETCHAR_PROTOTYPE int __io_getchar(void)
 #else
@@ -191,10 +248,10 @@ PUTCHAR_PROTOTYPE
 GETCHAR_PROTOTYPE
 {
   uint8_t ch = 0;
-  /* Clear the Overrun flag just before receiving the first character */
+  // Clear the Overrun flag just before receiving the first character
   __HAL_UART_CLEAR_OREFLAG(&huart2);
-  /* Wait for reception of a character on the USART RX line and echo this
-   * character on console */
+   //Wait for reception of a character on the USART RX line and echo this
+   // character on console
   HAL_UART_Receive(&huart2, (uint8_t *)&ch, 1, 100);
   HAL_UART_Transmit(&huart2, (uint8_t *)&ch, 1, 100);
 //  HAL_UART_Receive_DMA(&huart2, &ch, 1);
@@ -202,7 +259,7 @@ GETCHAR_PROTOTYPE
 
   return ch;
 }
-
+*/
 
 /************************************************************************************/
 
@@ -259,15 +316,35 @@ GETCHAR_PROTOTYPE
 			}
 
 			pulseW = *deltaT * timeFactor/1000000000;
-			windspeed = 0.01/(pulseW*pathDiff);  //d/(t*path diff)
+			windspeed = DIST/(pulseW*cal_val);  //d/(t*path diff)
 			IsFirstCaptured = 0;
 			__HAL_TIM_SET_COUNTER(htim, 0);
 			//__HAL_TIM_SET_CAPTUREPOLARITY(htim, TIM_CHANNEL_1, TIM_INPUTCHANNELPOLARITY_RISING);
 			//__HAL_TIM_DISABLE_IT(&htim1, TIM_IT_CC1);
 		}
 	}
+}*/
+
+void pulseWavg (void);
+//calculate the pulseW average  - this is to remove the noise and jittering in the pulse - oct 22, 2024
+float pulseW_arr[100];
+float pulseW_avg;
+
+void pulseWavg (void)
+{
+	uint8_t i = 0 ;
+	float sum = 0;
+	if (pulseW != 0)
+	{
+		for (i = 0; i <=100; i++)
+		{
+			pulseW_arr[i] = pulseW;
+			sum += pulseW_arr[i];
+		}
+	}
+	pulseW_avg = sum/100;
 }
-*/
+//Tim1 input capture callback function for calculating the pulseW
 void HAL_TIM_IC_CaptureCallback(TIM_HandleTypeDef *htim)
 {
 	//if the interrupt is triggered by 1st Channel
@@ -289,39 +366,38 @@ void HAL_TIM_IC_CaptureCallback(TIM_HandleTypeDef *htim)
 		int indxf = 0;
 		int countr = 0;
 		int countrf = 0;
-
 		float riseavg = 0;
 		float rfavg = 0;
-		/* In case of high Frequencies, the DMA sometimes captures 0's in the beginning.
-		 * increment the index until some useful data shows up
-		*/
+		 /*In case of high Frequencies, the DMA sometimes captures 0's in the beginning.
+		 * increment the index until some useful data shows up*/
+
 		while (riseData[indxr] == 0) indxr++;
 
-		/* Again at very high frequencies, sometimes the values don't change
-		* So we will wait for the update among the values
-		 */
-		while ( (MIN( (riseData[indxr+1]-riseData[indxr]), (riseData[indxr+2]-riseData[indxr+1]) ) ) == 0) indxr++;
-		/* riseavg is the difference in the 2 consecutive rise Time */
+		 /*Again at very high frequencies, sometimes the values don't change
+		* So we will wait for the update among the values*/
 
-		/* Assign a start value to riseavg */
+		while ( (MIN( (riseData[indxr+1]-riseData[indxr]), (riseData[indxr+2]-riseData[indxr+1]) ) ) == 0) indxr++;
+		 //riseavg is the difference in the 2 consecutive rise Time
+
+		 //Assign a start value to riseavg
 		riseavg += MIN((riseData[indxr+1]-riseData[indxr]), (riseData[indxr+2]-riseData[indxr+1]));
 		indxr++;
 		countr++;
-		/* start adding the values to the riseavg */
+		// start adding the values to the riseavg
 		while (indxr < (numval))
 		{
 			riseavg += MIN((riseData[indxr+1]-riseData[indxr]), riseavg/countr);
 			countr++;
 			indxr++;
 		}
-		/* Find the average riseavg, the average time between 2 RISE */
+		/* Find the average riseavg, the average time between 2 RISE*/
 		riseavg = riseavg/countr;
 		indxr = 0;
-		/* The calculation for the Falling pulse on second channel */
-		/* If the fall time is lower than rise time,
-		 * Then there must be some error and we will increment
-		 * both, until the error is gone
-		*/
+		 //The calculation for the Falling pulse on second channel
+		 //If the fall time is lower than rise time,
+		// Then there must be some error and we will increment
+		 // both, until the error is gone
+
 		if (fallData[indxf] < riseData[indxr])
 		{
 			indxf+=2;
@@ -336,21 +412,21 @@ void HAL_TIM_IC_CaptureCallback(TIM_HandleTypeDef *htim)
 			while (fallData[indxf] > riseData[indxr+1]) indxr++;
 		}
 
-		/* The method used for the calculation below is as follows:
+		 /*The method used for the calculation below is as follows:
 		* If Fall time < Rise Time, increment Fall counter
 		* If Fall time - Rise Time is in between 0 and (difference between 2 Rise times), then its a success
-		 * If fall time > Rise time, but is also > (difference between 2 Rise times), then increment Rise Counter
-		 */
+		 * If fall time > Rise time, but is also > (difference between 2 Rise times), then increment Rise Counter*/
+
 		while ((indxf < (numval)) && (indxr < (numval)))
 		{
-			/* If the Fall time is lower than rise time, increment the fall indx */
+			//If the Fall time is lower than rise time, increment the fall indx
 			while ((int16_t)(fallData[indxf]-riseData[indxr]) < 0)
 			{
 				indxf++;
 			}
 			/* If the Difference in fall time and rise time is >0 and less than rise average,
-			 * Then we will register it as a success and increment the countrf (the number of successes)
-			 */
+			 * Then we will register it as a success and increment the countrf (the number of successes)*/
+
 			if (((int16_t)(fallData[indxf]-riseData[indxr]) >= 0) && (((int16_t)(fallData[indxf]-riseData[indxr]) <= riseavg)))
 			{
 				rfavg += MIN((fallData[indxf]-riseData[indxr]), (fallData[indxf+1]-riseData[indxr+1]));
@@ -363,22 +439,24 @@ void HAL_TIM_IC_CaptureCallback(TIM_HandleTypeDef *htim)
 				indxr++;
 			}
 		}
-		/* Calculate the Average time between 2 Rise */
+		//Calculate the Average time between 2 Rise
 		rfavg = rfavg/countrf;
 		v_sound = 331+0.61*temp;
 		//pulseW = *deltaT * timeFactor/1000000000;
 		pulseW = (rfavg)*timeFactor/1000000000;  //converting ns to s
-
+		pulseWavg();
 //		deltaT_real = *delta_T_alg(pulseW);
 		//windspeed = dist/((pulseW)*cali_val);  //d/(t*path diff)
-//		windspeed = dist/(deltaT_real*cal_val) - v_sound; //might need to make this an array and take the average*/
-		windspeed = dist/(pulseW*cal_val) - v_sound; //might need to make this an array and take the average
+//		windspeed = dist/(deltaT_real*cal_val) - v_sound; //might need to make this an array and take the average
+		windspeed = DIST/(pulseW_avg*cal_val) - v_sound; //might need to make this an array and take the average
 		riseCaptured = 0;
 		fallCaptured = 0;
 		isMeasured = 1;
 		}
 	}
 
+
+//time difference algorithm taking from a paper, but it is not very useful and it is not in used
 float T = 0;
 float pluseW_pre =0;
 float deltaT_pre = 0;
@@ -386,7 +464,7 @@ float deltaT_prim = 0;
 
 float *delta_T_alg (float deltaT)
 {
-	T = 1/freq;
+	T = 1/FREQ;
 	if (deltaT <= deltaT_pre/1000000000 + T)
 	{
 		deltaT_prim = deltaT;
@@ -398,68 +476,71 @@ float *delta_T_alg (float deltaT)
 	return &deltaT_pre;
 }
 
-// isr callback function -- uncomment if using interrupt mode or dma mode.  Right now we are using polling mode.
-/*void HAL_ADC_ConvCpltCallback(ADC_HandleTypeDef* hadc)
+
+//adc in dma mode -get adc value for temperature
+
+uint32_t adc_val[1];
+void adc_dma(void)
 {
-	//DMA mode
-	//adc_val = buffer;  //store the value in adc_val
+	// calibrate ADC for better accuracy and start it w/ interrupt
+	 if(HAL_ADCEx_Calibration_Start(&hadc1, ADC_SINGLE_ENDED) != HAL_OK)
+	 {
+		 Error_Handler();
+	}
+	 /*if(HAL_ADC_Start_IT(&hadc1) != HAL_OK)
+	 {
+	 	 Error_Handler();
+	}*/
+	 // start pwm generation
+	if(HAL_TIM_PWM_Start(&htim4, TIM_CHANNEL_1) != HAL_OK)
+	{
+		Error_Handler();
+	 }
+	if(HAL_ADC_Start_DMA(&hadc1, (uint32_t*)adc_val, 1) != HAL_OK)
+	 {
+		Error_Handler();
+	}
+	HAL_ADCEx_Calibration_Start(&hadc1, ADC_SINGLE_ENDED);
+	HAL_ADC_Start_DMA(&hadc1, (uint32_t*)adc_val, 1);
 
-	//interrupt mode
-	adc_val = HAL_ADC_GetValue(&hadc1);  //read adc value
-	 if the continuos conversion is disabled, we need to start the ADC again here
-	HAL_ADC_Start_IT(&hadc1);
+	HAL_TIM_PWM_Start(&htim4, TIM_CHANNEL_1);
 	return;
-}*/
+}
 
-//get adc value for temperature
-
-float adc_val;
-//uint32_t buffer;
-//float adc_val_f;
-//uint16_t adc_val;
+#define V_REF 3300 // mV
+#define OFFSET 0.5
+float adc_val_f;
 
 float *getTemp(void)
 {
+	float reading_mV = 0;
 	//HAL_ADC_Start_IT(&hadc1); //start the adc in interrupt mode
 	//HAL_ADC_Start_DMA(&hadc1, &buffer, 1);  //start in DMA mode
 
-	//using polling method***********************************
-
+	//using polling method***********************************/
+/*
 	HAL_ADC_Start(&hadc1); // start the adc
 	HAL_ADC_PollForConversion(&hadc1, 100); // poll for conversion
 	adc_val = HAL_ADC_GetValue(&hadc1); // get the adc value
 	temp = (adc_val/4095) *(125-40);
-
 	HAL_ADC_Stop(&hadc1); // stop adc
-	/**********************************************************************/
-
+*/
+	/********************************************************************/
 	//usig DMA method
 	//HAL_ADCEx_Calibration_Start(&hadc1, ADC_SINGLE_ENDED);
 	//HAL_ADC_Start_DMA(&hadc1, (uint32_t*)&adc_val, 1);
-	//adc_val_f = adc_val;
+	//adc_val_f = adc_val[0];
 //	HAL_ADC_Start_DMA(&hadc1, (uint32_t*)&adc_val, 1);
-//	temp = (adc_val/4095) *(125-40);
-
-	//printf("adc value = %f\r\n", temp);
-	//HAL_Delay (100); // wait for 500ms
-//temp = (adc_val/4095) *(125-40);
+	//temp = (adc_val_f/4095) *(125 - -40);
+	reading_mV = adc_val[0] *  V_REF  / 4095 ;
+	temp =(reading_mV - 500) / 10; // 10mV/degree_C
 	return &temp;
 }
-/*void HAL_ADC_ConvCpltCallback(ADC_HandleTypeDef* hadc)
-{
-  adc_val = HAL_ADC_GetValue(&hadc1);
-//	adc_val = buffer;
-	//HAL_ADC_Stop_DMA(&hadc1);
 
-  return;
-  If continuousconversion mode is DISABLED uncomment below
-  //HAL_ADC_Start_IT (&hadc1);
-}*/
-
+//dac sine wave for the 25khz ultrasonic speaker
 //dac sine**************************************************/
 uint32_t sine_val[100];
 #define PI 3.1415926
-
 float dac_val = 1.2;
 uint32_t var;
 
@@ -480,23 +561,22 @@ void startSineW(bool start)
 	}
 }
 /******************************************************************/
-// lcd display*****************************************************/
 
+// lcd display*****************************************************/
 void lcd_disp(void)
 {
 	char * fltChar = malloc (sizeof (char) * 7);
 	//lcd_send_cmd (0x80);
 	//char fltChar [7];
 	sprintf(fltChar, "%.4f", windspeed);
-	lcd_put_cur(0,0);
-	lcd_send_string("Windspeed=");
+	lcd_put_cur(0,11);
+	//lcd_send_string("Windspeed=");
 	//lcd_send_data((windspeed/10) +48);
 	lcd_send_string(fltChar);
 	lcd_send_string(" ");
-	lcd_put_cur(1,0);
-	lcd_send_string("m/s");
+	//lcd_put_cur(1,0);
+	//lcd_send_string("m/s");
 	HAL_Delay(500);
-
 	return;
 }
 /********************************************************************/
@@ -513,12 +593,12 @@ int main(void)
   /* USER CODE BEGIN 1 */
  enum State {IDLE = 0, START = 1, CALTIME = 2, STOP = 3}; //define the number of states
  char State = IDLE;
- char inp;
+
 
  setvbuf(stdin, NULL, _IONBF, 0);
 
-lambda = v_sound/freq;  //wavelength
-pathDiff = (dist/lambda)-0.5;  //destructive interference, L/lambda-0.5=delta_L
+lambda = v_sound/FREQ;  //wavelength
+pathDiff = (DIST/lambda)-0.5;  //destructive interference, L/lambda-0.5=delta_L
 
   /* USER CODE END 1 */
 
@@ -558,11 +638,25 @@ pathDiff = (dist/lambda)-0.5;  //destructive interference, L/lambda-0.5=delta_L
   //HAL_UART_Transmit(&huart2, (uint8_t *)uart_buf, uart_buf_len, 100);
 
   //start pwm timer
-  HAL_TIM_PWM_Start(&htim4, TIM_CHANNEL_1);  //start TIM4 pwm ch1 - macro expan 0x00000000U
+  //HAL_TIM_PWM_Start(&htim4, TIM_CHANNEL_1);  //start TIM4 pwm ch1 - macro expan 0x00000000U
 
   lcd_init(); 														//initialize the lcd
   //start timer 2 for the sinewave
   HAL_TIM_Base_Start(&htim2);
+
+  //start adc dma
+  adc_dma();
+  //start uarat dma
+  //HAL_UART_Receive_DMA(&huart2, RxData, 1);
+  uart_dma();
+
+  //preprint something on the lcd
+  lcd_put_cur(0,0);
+  lcd_send_string("Windspeed=");
+  lcd_put_cur(1,0);
+  lcd_send_string("m/s");
+
+
 
   /* USER CODE END 2 */
 
@@ -573,6 +667,7 @@ pathDiff = (dist/lambda)-0.5;  //destructive interference, L/lambda-0.5=delta_L
 	  blinkLED();  //call the blinkLED function
 	  getTemp();
 	  lcd_disp();
+	  //uart_dma();
 
 	  if (isMeasured)
 	  {
@@ -582,10 +677,11 @@ pathDiff = (dist/lambda)-0.5;  //destructive interference, L/lambda-0.5=delta_L
 		  isMeasured = 0;
 	  }
 	  //scan for user inpt for the state machine
-	 inp = *scanInp();
+
+	 //inp = *scanInp();
 	  //wait again so we don't flood the serial terminal
 	  //HAL_Delay(100);
-
+	  inp = RxData[0];
 	  if (inp == 'i')
 	  {
 		  State = IDLE;
@@ -604,11 +700,13 @@ pathDiff = (dist/lambda)-0.5;  //destructive interference, L/lambda-0.5=delta_L
 	  {
 	  case IDLE:
 		 // uart_buf_len = sprintf(uart_buf, "In IDLE state\r\n");
-		  printf("In IDLE State\r\n");
+		  //printf("In IDLE State\r\n");
 		  //HAL_UART_Transmit(&huart2, (uint8_t *)uart_buf, uart_buf_len, 100);
 		  //HAL_GPIO_WritePin(GPIOB, GPIO_PIN_4, GPIO_PIN_RESET); /// disable nShutdown pin for digital amp
 		  //startSpeaker(0); //turn off speaker
 		  startSineW(0); //using sinewave instead
+		  RxData[0] = '\0';
+
 		  HAL_Delay(1000);
 
 		  break;
@@ -616,7 +714,7 @@ pathDiff = (dist/lambda)-0.5;  //destructive interference, L/lambda-0.5=delta_L
 	  case START:
 		  //nShutdownDamp = 1; // start digital amplifier
 		  //HAL_GPIO_WritePin(GPIOB, GPIO_PIN_4, GPIO_PIN_SET);
-		  printf("In START State\r\n"); // print status in terminal
+		  //printf("In START State\r\n"); // print status in terminal
 		  //startSpeaker(1);
 		  startSineW(1); //using sinewave instead
 		  //uart_buf_len = sprintf(uart_buf, "In Start State\r\n");
@@ -625,11 +723,14 @@ pathDiff = (dist/lambda)-0.5;  //destructive interference, L/lambda-0.5=delta_L
 		  //HAL_Delay(100);  //wait 20ms
 		  //startSpeaker(0);
 		   */
-		  cal_val = dist/(pulseW*v_sound);  //get the calibration value from the drift and temperature
+		  cal_val = DIST/(pulseW*v_sound);  //get the calibration value from the drift and temperature
+		  RxData[0] = '\0';
 		  State = CALTIME;
+
 		  break;
 
 	  case CALTIME:
+
 		  //deltaT = *calTime();
 		  //printf("Delay is = %f\r\n", deltaT);
 		  //HAL_TIM_IC_CaptureCallback(&htim1);
@@ -734,20 +835,20 @@ static void MX_ADC1_Init(void)
   /** Common config
   */
   hadc1.Instance = ADC1;
-  hadc1.Init.ClockPrescaler = ADC_CLOCK_SYNC_PCLK_DIV4;
+  hadc1.Init.ClockPrescaler = ADC_CLOCK_ASYNC_DIV4;
   hadc1.Init.Resolution = ADC_RESOLUTION_12B;
   hadc1.Init.DataAlign = ADC_DATAALIGN_RIGHT;
   hadc1.Init.GainCompensation = 0;
   hadc1.Init.ScanConvMode = ADC_SCAN_DISABLE;
   hadc1.Init.EOCSelection = ADC_EOC_SINGLE_CONV;
   hadc1.Init.LowPowerAutoWait = DISABLE;
-  hadc1.Init.ContinuousConvMode = ENABLE;
+  hadc1.Init.ContinuousConvMode = DISABLE;
   hadc1.Init.NbrOfConversion = 1;
   hadc1.Init.DiscontinuousConvMode = DISABLE;
-  hadc1.Init.ExternalTrigConv = ADC_SOFTWARE_START;
-  hadc1.Init.ExternalTrigConvEdge = ADC_EXTERNALTRIGCONVEDGE_NONE;
+  hadc1.Init.ExternalTrigConv = ADC_EXTERNALTRIG_T4_TRGO;
+  hadc1.Init.ExternalTrigConvEdge = ADC_EXTERNALTRIGCONVEDGE_RISING;
   hadc1.Init.DMAContinuousRequests = ENABLE;
-  hadc1.Init.Overrun = ADC_OVR_DATA_OVERWRITTEN;
+  hadc1.Init.Overrun = ADC_OVR_DATA_PRESERVED;
   hadc1.Init.OversamplingMode = DISABLE;
   if (HAL_ADC_Init(&hadc1) != HAL_OK)
   {
@@ -1019,6 +1120,7 @@ static void MX_TIM4_Init(void)
   //6800-1  , this gives 25khz, f_pwm = fclk/(psc*(arr-1))
   //arr/2-1 = 6800/2-1
   //timer 4 is unused right now since we are using the sinewave from timer 2
+  // timer 4 is used for adc trigger event
 
   /* USER CODE END TIM4_Init 1 */
   htim4.Instance = TIM4;
@@ -1036,28 +1138,27 @@ static void MX_TIM4_Init(void)
   {
     Error_Handler();
   }
-  if (HAL_TIM_PWM_Init(&htim4) != HAL_OK)
+  if (HAL_TIM_OC_Init(&htim4) != HAL_OK)
   {
     Error_Handler();
   }
-  sMasterConfig.MasterOutputTrigger = TIM_TRGO_RESET;
+  sMasterConfig.MasterOutputTrigger = TIM_TRGO_UPDATE;
   sMasterConfig.MasterSlaveMode = TIM_MASTERSLAVEMODE_DISABLE;
   if (HAL_TIMEx_MasterConfigSynchronization(&htim4, &sMasterConfig) != HAL_OK)
   {
     Error_Handler();
   }
-  sConfigOC.OCMode = TIM_OCMODE_PWM1;
+  sConfigOC.OCMode = TIM_OCMODE_TIMING;
   sConfigOC.Pulse = 3399;
   sConfigOC.OCPolarity = TIM_OCPOLARITY_HIGH;
   sConfigOC.OCFastMode = TIM_OCFAST_DISABLE;
-  if (HAL_TIM_PWM_ConfigChannel(&htim4, &sConfigOC, TIM_CHANNEL_1) != HAL_OK)
+  if (HAL_TIM_OC_ConfigChannel(&htim4, &sConfigOC, TIM_CHANNEL_1) != HAL_OK)
   {
     Error_Handler();
   }
   /* USER CODE BEGIN TIM4_Init 2 */
 
   /* USER CODE END TIM4_Init 2 */
-  HAL_TIM_MspPostInit(&htim4);
 
 }
 
@@ -1118,6 +1219,7 @@ static void MX_DMA_Init(void)
   /* DMA controller clock enable */
   __HAL_RCC_DMAMUX1_CLK_ENABLE();
   __HAL_RCC_DMA1_CLK_ENABLE();
+  __HAL_RCC_DMA2_CLK_ENABLE();
 
   /* DMA interrupt init */
   /* DMA1_Channel1_IRQn interrupt configuration */
@@ -1135,6 +1237,12 @@ static void MX_DMA_Init(void)
   /* DMA1_Channel5_IRQn interrupt configuration */
   HAL_NVIC_SetPriority(DMA1_Channel5_IRQn, 0, 0);
   HAL_NVIC_EnableIRQ(DMA1_Channel5_IRQn);
+  /* DMA2_Channel1_IRQn interrupt configuration */
+  HAL_NVIC_SetPriority(DMA2_Channel1_IRQn, 0, 0);
+  HAL_NVIC_EnableIRQ(DMA2_Channel1_IRQn);
+  /* DMA2_Channel2_IRQn interrupt configuration */
+  HAL_NVIC_SetPriority(DMA2_Channel2_IRQn, 0, 0);
+  HAL_NVIC_EnableIRQ(DMA2_Channel2_IRQn);
 
 }
 
@@ -1174,8 +1282,14 @@ static void MX_GPIO_Init(void)
 }
 
 /* USER CODE BEGIN 4 */
-// called when first half of buffer is filled
-
+//adc dma callback function
+void HAL_ADC_ConvCpltCallback(ADC_HandleTypeDef *hadc)
+{
+	//adc_val[0] = HAL_ADC_GetValue(&hadc1);
+	//adc_val_f = adc_val;
+	HAL_ADC_Start_DMA(&hadc1, (uint32_t*)adc_val, 1);
+	return;
+}
 /* USER CODE END 4 */
 
 /**
