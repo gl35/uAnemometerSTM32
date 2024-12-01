@@ -2,6 +2,7 @@
 /** Put this in the src folder **/
 
 #include "i2c-lcd.h"
+#include "main.h"
 extern I2C_HandleTypeDef hi2c1;  // change your handler here accordingly
 
 #define SLAVE_ADDRESS_LCD 0x4E // change this according to ur setup
@@ -16,8 +17,25 @@ void lcd_send_cmd (char cmd)
 	data_t[1] = data_u|0x08;  //en=0, rs=0
 	data_t[2] = data_l|0x0C;  //en=1, rs=0
 	data_t[3] = data_l|0x08;  //en=0, rs=0
-	HAL_I2C_Master_Transmit (&hi2c1, SLAVE_ADDRESS_LCD,(uint8_t *) data_t, 4, 100);
+//	HAL_I2C_Master_Transmit (&hi2c1, SLAVE_ADDRESS_LCD,(uint8_t *) data_t, 4, 100); //for polling just use this line
 //	HAL_I2C_Master_Transmit_DMA(&hi2c1, SLAVE_ADDRESS_LCD, (uint8_t *) data_t, 4);
+	while (HAL_I2C_Master_Transmit_DMA(&hi2c1, SLAVE_ADDRESS_LCD, (uint8_t*) data_t, 4) != HAL_OK)
+	{
+		/* Error_Handler() function is called when Timeout error occurs.
+		When Acknowledge failure occurs (Slave don't acknowledge its address)
+		Master restarts communication */
+		if (HAL_I2C_GetError(&hi2c1) != HAL_I2C_ERROR_AF)
+		{
+			Error_Handler();
+		}
+	}
+	while (HAL_I2C_GetState(&hi2c1) != HAL_I2C_STATE_READY)
+	{
+		//HAL_I2C_Master_Transmit (&hi2c1, SLAVE_ADDRESS_LCD,(uint8_t *) data_t, 4, 100);
+		/*##-2- Start the transmission process #####################################*/
+		/* While the I2C in reception process, user can transmit data through
+	 	 "aTxBuffer" buffer */
+	}
 }
 
 void lcd_send_data (char data)
@@ -30,15 +48,26 @@ void lcd_send_data (char data)
 	data_t[1] = data_u|0x09;  //en=0, rs=0
 	data_t[2] = data_l|0x0D;  //en=1, rs=0
 	data_t[3] = data_l|0x09;  //en=0, rs=0
-	HAL_I2C_Master_Transmit (&hi2c1, SLAVE_ADDRESS_LCD,(uint8_t *) data_t, 4, 100);
+//	HAL_I2C_Master_Transmit (&hi2c1, SLAVE_ADDRESS_LCD,(uint8_t *) data_t, 4, 100);  //for polling just use this line
 //	HAL_I2C_Master_Transmit_DMA(&hi2c1, SLAVE_ADDRESS_LCD, (uint8_t *) data_t, 4);
+	while (HAL_I2C_Master_Transmit_DMA(&hi2c1, SLAVE_ADDRESS_LCD, (uint8_t*) data_t, 4) != HAL_OK)
+	{
+		/* Error_Handler() function is called when Timeout error occurs.
+	 	 When Acknowledge failure occurs (Slave don't acknowledge its address)
+		Master restarts communication */
+		if (HAL_I2C_GetError(&hi2c1) != HAL_I2C_ERROR_AF)
+		{
+			Error_Handler();
+		}
+	}
+	while (HAL_I2C_GetState(&hi2c1) != HAL_I2C_STATE_READY) {
+		//HAL_I2C_Master_Transmit (&hi2c1, SLAVE_ADDRESS_LCD,(uint8_t *) data_t, 4, 100);
+		/*##-2- Start the transmission process #####################################*/
+		/* While the I2C in reception process, user can transmit data through
+		"aTxBuffer" buffer */
+	}
 }
 
-
-void HAL_I2C_MasterTxCpltCallback(I2C_HandleTypeDef* hi2c)
-{
-//	Tx DONE... Do nothing
-}
 
 /*void HAL_I2C_MasterRxCpltCallback (I2C_HandleTypeDef * hi2c)
 {
@@ -99,4 +128,9 @@ void lcd_init (void)
 void lcd_send_string (char *str)
 {
 	while (*str) lcd_send_data (*str++);
+}
+
+void HAL_I2C_MasterTxCpltCallback(I2C_HandleTypeDef *hi2c)
+{
+    return;
 }

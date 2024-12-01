@@ -90,7 +90,7 @@ void blinkLED ();								//blink the led function
 char *scanInp(void);							//scan user input to toggle the state machine
 //void startSpeaker(bool start);			//start speaker function for pwm squared wave output.  replaced by dac sine wave.
 float *calTime(void);						//calculate the time delay, currently not in used
-float *delta_T_alg (float pulseW);		//calculatae the delta T using a paper's algorithm, but it is not very useful
+float *delta_T_alg (float pulseW);		//calculate the delta T using a paper's algorithm, but it is not very useful
 float *getTemp(void);						//adc calculate temperature
 void startSineW(bool start);				//start the dac sinewave
 void lcd_disp(void);							//lcd display
@@ -100,7 +100,7 @@ void adc_dma(void);						//adc dma
 #define __USE_C99_MATH
 
 //data buffer for rising and falling DMA
-#define numval 50
+#define numval 256
 #define TIMCLOCK 170000000
 #define PSCALAR 16
 #define MIN(a,b) ((a) < (b) ? (a) : (b))
@@ -312,7 +312,7 @@ GETCHAR_PROTOTYPE
 			}
 			else if (tim1 > tim2)
 			{
-				deltaT = (0xffff - tim1) + tim2;
+				deltaT = (0xffffff - tim1) + tim2;
 			}
 
 			pulseW = *deltaT * timeFactor/1000000000;
@@ -325,28 +325,54 @@ GETCHAR_PROTOTYPE
 	}
 }*/
 
-void pulseWavg (void);
+void pulseWavg (float pulse_in);
 //calculate the pulseW average  - this is to remove the noise and jittering in the pulse - oct 22, 2024
-float pulseW_arr[100];
+float pulseW_arr[99];
 float pulseW_avg;
 
-void pulseWavg (void)
+void pulseWavg (float pulse_in)
 {
 	uint8_t i = 0 ;
 	float sum = 0;
-	if (pulseW != 0)
+	if (pulse_in != 0)
 	{
-		for (i = 0; i <=100; i++)
+		for (i = 0; i <= 99; i++)
 		{
-			pulseW_arr[i] = pulseW;
+			pulseW_arr[i] = pulse_in;
 			sum += pulseW_arr[i];
 		}
+		pulseW_avg = sum/100;
 	}
-	pulseW_avg = sum/100;
 }
+
+//time difference algorithm taking from a paper, but it is not very useful and it is not in used
+/*float T = 0;
+float pluseW_pre =0;
+float deltaT_pre = 0;
+float deltaT_prim = 0;
+
+float *delta_T_alg (float deltaT)
+{
+	T = 1/FREQ;
+	if (deltaT <= deltaT_pre/1000000000 + T)
+	{
+		deltaT_prim = deltaT;
+	}
+	else {
+		deltaT_prim = deltaT - T;
+	}
+	deltaT_pre = deltaT_prim;
+	return &deltaT_pre;
+}*/
+uint8_t j = 0;
+#define vw_arr_size 200
+
+float windspeed_arr[vw_arr_size], windspeed_avg;
+
 //Tim1 input capture callback function for calculating the pulseW
 void HAL_TIM_IC_CaptureCallback(TIM_HandleTypeDef *htim)
 {
+
 	//if the interrupt is triggered by 1st Channel
 	if (htim->Channel == HAL_TIM_ACTIVE_CHANNEL_1)
 	{
@@ -357,24 +383,19 @@ void HAL_TIM_IC_CaptureCallback(TIM_HandleTypeDef *htim)
 	{
 		fallCaptured = 1;
 	}
-
 	if ((riseCaptured) && (fallCaptured))
 	{
 		// calculate the reference clock
 		//float refClock = TIMCLOCK/(PSCALAR+1);
-		int indxr = 0;
-		int indxf = 0;
-		int countr = 0;
-		int countrf = 0;
-		float riseavg = 0;
-		float rfavg = 0;
-		 /*In case of high Frequencies, the DMA sometimes captures 0's in the beginning.
-		 * increment the index until some useful data shows up*/
+		int indxr = 0, indxf = 0, countr = 0, countrf = 0;
+		float riseavg = 0,  rfavg = 0;
+		 //In case of high Frequencies, the DMA sometimes captures 0's in the beginning.
+		// increment the index until some useful data shows up
 
 		while (riseData[indxr] == 0) indxr++;
 
-		 /*Again at very high frequencies, sometimes the values don't change
-		* So we will wait for the update among the values*/
+		 //Again at very high frequencies, sometimes the values don't change
+		//So we will wait for the update among the values
 
 		while ( (MIN( (riseData[indxr+1]-riseData[indxr]), (riseData[indxr+2]-riseData[indxr+1]) ) ) == 0) indxr++;
 		 //riseavg is the difference in the 2 consecutive rise Time
@@ -390,7 +411,7 @@ void HAL_TIM_IC_CaptureCallback(TIM_HandleTypeDef *htim)
 			countr++;
 			indxr++;
 		}
-		/* Find the average riseavg, the average time between 2 RISE*/
+		// Find the average riseavg, the average time between 2 RISE
 		riseavg = riseavg/countr;
 		indxr = 0;
 		 //The calculation for the Falling pulse on second channel
@@ -412,10 +433,10 @@ void HAL_TIM_IC_CaptureCallback(TIM_HandleTypeDef *htim)
 			while (fallData[indxf] > riseData[indxr+1]) indxr++;
 		}
 
-		 /*The method used for the calculation below is as follows:
-		* If Fall time < Rise Time, increment Fall counter
-		* If Fall time - Rise Time is in between 0 and (difference between 2 Rise times), then its a success
-		 * If fall time > Rise time, but is also > (difference between 2 Rise times), then increment Rise Counter*/
+		// The method used for the calculation below is as follows:
+		//If Fall time < Rise Time, increment Fall counter
+		//If Fall time - Rise Time is in between 0 and (difference between 2 Rise times), then its a success
+		//If fall time > Rise time, but is also > (difference between 2 Rise times), then increment Rise Counter
 
 		while ((indxf < (numval)) && (indxr < (numval)))
 		{
@@ -424,8 +445,8 @@ void HAL_TIM_IC_CaptureCallback(TIM_HandleTypeDef *htim)
 			{
 				indxf++;
 			}
-			/* If the Difference in fall time and rise time is >0 and less than rise average,
-			 * Then we will register it as a success and increment the countrf (the number of successes)*/
+			// If the Difference in fall time and rise time is >0 and less than rise average,
+			// Then we will register it as a success and increment the countrf (the number of successes)
 
 			if (((int16_t)(fallData[indxf]-riseData[indxr]) >= 0) && (((int16_t)(fallData[indxf]-riseData[indxr]) <= riseavg)))
 			{
@@ -441,14 +462,21 @@ void HAL_TIM_IC_CaptureCallback(TIM_HandleTypeDef *htim)
 		}
 		//Calculate the Average time between 2 Rise
 		rfavg = rfavg/countrf;
-		v_sound = 331+0.61*temp;
+		//v_sound = 331+0.61*temp;
 		//pulseW = *deltaT * timeFactor/1000000000;
-		pulseW = (rfavg)*timeFactor/1000000000;  //converting ns to s
-		pulseWavg();
+		pulseW = rfavg*timeFactor/1000000000;  //converting ns to s
+
+		float sum = 0;
+		// if the magnitude of the pulse width outside of the range 1us to 40us, then do not do this
+		if (pulseW > 0.000001 && pulseW <= 0.000040)
+		{
+			windspeed = DIST/(pulseW*cal_val) - v_sound;
+		}
+
 //		deltaT_real = *delta_T_alg(pulseW);
 		//windspeed = dist/((pulseW)*cali_val);  //d/(t*path diff)
 //		windspeed = dist/(deltaT_real*cal_val) - v_sound; //might need to make this an array and take the average
-		windspeed = DIST/(pulseW_avg*cal_val) - v_sound; //might need to make this an array and take the average
+
 		riseCaptured = 0;
 		fallCaptured = 0;
 		isMeasured = 1;
@@ -456,26 +484,19 @@ void HAL_TIM_IC_CaptureCallback(TIM_HandleTypeDef *htim)
 	}
 
 
-//time difference algorithm taking from a paper, but it is not very useful and it is not in used
-float T = 0;
-float pluseW_pre =0;
-float deltaT_pre = 0;
-float deltaT_prim = 0;
+/*void windspeed_ave(void);
 
-float *delta_T_alg (float deltaT)
+void windspeed_ave (void)
 {
-	T = 1/FREQ;
-	if (deltaT <= deltaT_pre/1000000000 + T)
+	float sum = 0;
+	//need more work
+	for (uint8_t j = 0; j <=99; j++)
 	{
-		deltaT_prim = deltaT;
+			windspeed_arr[j] = windspeed;
+			sum += windspeed_arr[j];
 	}
-	else {
-		deltaT_prim = deltaT - T;
-	}
-	deltaT_pre = deltaT_prim;
-	return &deltaT_pre;
-}
-
+	windpseed_avg = sum/100;
+}*/
 
 //adc in dma mode -get adc value for temperature
 
@@ -554,7 +575,7 @@ void startSineW(bool start)
 	else {
 		 //HAL_TIM_Base_Start(&htim2);
 		 HAL_DAC_Start_DMA(&hdac1, DAC1_CHANNEL_1, sine_val, 100, DAC_ALIGN_12B_R);
-		 for (int i=0; i<100; i++)
+		 for (int i = 0; i < 100; i++)
 		 {
 			 sine_val[i] = ((sin(i*2*PI/100) + 1)*(4096/2));
 		 }
@@ -562,21 +583,28 @@ void startSineW(bool start)
 }
 /******************************************************************/
 
-// lcd display*****************************************************/
+// lcd display*****************************************************/  something is wrong with this lcd code, need to fix th buffering from flooding while not affecting the pulse width measurement
 void lcd_disp(void)
 {
 	char * fltChar = malloc (sizeof (char) * 7);
+	//char *fltChar2 = malloc (sizeof(char) * 7);
 	//lcd_send_cmd (0x80);
 	//char fltChar [7];
 	sprintf(fltChar, "%.4f", windspeed);
 	lcd_put_cur(0,11);
+
 	//lcd_send_string("Windspeed=");
 	//lcd_send_data((windspeed/10) +48);
 	lcd_send_string(fltChar);
 	lcd_send_string(" ");
+
+/*	sprintf(fltChar2, "%.6f", pulseW);
+	lcd_put_cur(1,8);
+	lcd_send_string (fltChar2);
+	lcd_send_string(" ");*/
 	//lcd_put_cur(1,0);
 	//lcd_send_string("m/s");
-	HAL_Delay(500);
+	//HAL_Delay(10);
 	return;
 }
 /********************************************************************/
@@ -652,11 +680,7 @@ pathDiff = (DIST/lambda)-0.5;  //destructive interference, L/lambda-0.5=delta_L
 
   //preprint something on the lcd
   lcd_put_cur(0,0);
-  lcd_send_string("Windspeed=");
-  lcd_put_cur(1,0);
-  lcd_send_string("m/s");
-
-
+  lcd_send_string("W_vel[m/s]=");
 
   /* USER CODE END 2 */
 
@@ -664,7 +688,7 @@ pathDiff = (DIST/lambda)-0.5;  //destructive interference, L/lambda-0.5=delta_L
   /* USER CODE BEGIN WHILE */
   while (1)
   {
-	  blinkLED();  //call the blinkLED function
+	  //blinkLED();  //call the blinkLED function - disable the blink to save processing power
 	  getTemp();
 	  lcd_disp();
 	  //uart_dma();
@@ -693,12 +717,13 @@ pathDiff = (DIST/lambda)-0.5;  //destructive interference, L/lambda-0.5=delta_L
 	  else if (inp == 't')
 	  {
 		  State = STOP;
-	  } else {};
+	  }else{};
 
 	  //State Machine starts here
 	  switch (State)
 	  {
 	  case IDLE:
+		  lcd_init();
 		 // uart_buf_len = sprintf(uart_buf, "In IDLE state\r\n");
 		  //printf("In IDLE State\r\n");
 		  //HAL_UART_Transmit(&huart2, (uint8_t *)uart_buf, uart_buf_len, 100);
@@ -723,6 +748,7 @@ pathDiff = (DIST/lambda)-0.5;  //destructive interference, L/lambda-0.5=delta_L
 		  //HAL_Delay(100);  //wait 20ms
 		  //startSpeaker(0);
 		   */
+		  v_sound = 331+0.61*temp; // only capturing temp once
 		  cal_val = DIST/(pulseW*v_sound);  //get the calibration value from the drift and temperature
 		  RxData[0] = '\0';
 		  State = CALTIME;
@@ -730,7 +756,7 @@ pathDiff = (DIST/lambda)-0.5;  //destructive interference, L/lambda-0.5=delta_L
 		  break;
 
 	  case CALTIME:
-
+		  //windspeed_ave();
 		  //deltaT = *calTime();
 		  //printf("Delay is = %f\r\n", deltaT);
 		  //HAL_TIM_IC_CaptureCallback(&htim1);
@@ -741,6 +767,7 @@ pathDiff = (DIST/lambda)-0.5;  //destructive interference, L/lambda-0.5=delta_L
 		  //printf("windspeed is %f\r\n", windspeed);
 		  //HAL_Delay(1000);  //wait 100ms
 		  //State = START;
+
 		  break;
 
 	  case STOP:
@@ -1064,7 +1091,7 @@ static void MX_TIM2_Init(void)
   htim2.Instance = TIM2;
   htim2.Init.Prescaler = 17-1;
   htim2.Init.CounterMode = TIM_COUNTERMODE_UP;
-  htim2.Init.Period = 3;
+  htim2.Init.Period = 4-1;
   htim2.Init.ClockDivision = TIM_CLOCKDIVISION_DIV1;
   htim2.Init.AutoReloadPreload = TIM_AUTORELOAD_PRELOAD_DISABLE;
   if (HAL_TIM_Base_Init(&htim2) != HAL_OK)
@@ -1290,6 +1317,8 @@ void HAL_ADC_ConvCpltCallback(ADC_HandleTypeDef *hadc)
 	HAL_ADC_Start_DMA(&hadc1, (uint32_t*)adc_val, 1);
 	return;
 }
+
+
 /* USER CODE END 4 */
 
 /**
