@@ -3,5 +3,5 @@
 ../Core/Src/i2c-lcd.c:77:6:lcd_clear	2
 ../Core/Src/i2c-lcd.c:86:6:lcd_put_cur	3
 ../Core/Src/i2c-lcd.c:102:6:lcd_init	1
-../Core/Src/i2c-lcd.c:128:6:lcd_send_string	2
-../Core/Src/i2c-lcd.c:133:6:HAL_I2C_MasterTxCpltCallback	1
+../Core/Src/i2c-lcd.c:127:6:lcd_send_string	2
+../Core/Src/i2c-lcd.c:132:6:HAL_I2C_MasterTxCpltCallback	1

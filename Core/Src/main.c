@@ -18,6 +18,7 @@
 /* USER CODE END Header */
 /* Includes ------------------------------------------------------------------*/
 #include "main.h"
+#include "cmsis_os.h"
 
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
@@ -27,6 +28,13 @@
 #include <stdbool.h>
 #include "math.h"
 #include "i2c-lcd.h"
+
+#include "FreeRTOS.h"
+#include "task.h"
+//#include "timers.h"
+#include "queue.h"
+#include "semphr.h"
+//#include "event_groups.h"
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
@@ -66,6 +74,45 @@ UART_HandleTypeDef huart2;
 DMA_HandleTypeDef hdma_usart2_rx;
 DMA_HandleTypeDef hdma_usart2_tx;
 
+/* Definitions for defaultTask */
+osThreadId_t defaultTaskHandle;
+const osThreadAttr_t defaultTask_attributes = {
+  .name = "defaultTask",
+  .priority = (osPriority_t) osPriorityNormal,
+  .stack_size = 256 * 4
+};
+/* Definitions for getTemp */
+osThreadId_t getTempHandle;
+const osThreadAttr_t getTemp_attributes = {
+  .name = "getTemp",
+  .priority = (osPriority_t) osPriorityBelowNormal,
+  .stack_size = 128 * 4
+};
+/* Definitions for sendLCD */
+osThreadId_t sendLCDHandle;
+const osThreadAttr_t sendLCD_attributes = {
+  .name = "sendLCD",
+  .priority = (osPriority_t) osPriorityAboveNormal,
+  .stack_size = 256 * 4
+};
+/* Definitions for getPulseW */
+osThreadId_t getPulseWHandle;
+const osThreadAttr_t getPulseW_attributes = {
+  .name = "getPulseW",
+  .priority = (osPriority_t) osPriorityRealtime,
+  .stack_size = 256 * 4
+};
+/* Definitions for myMutex01 */
+osMutexId_t myMutex01Handle;
+const osMutexAttr_t myMutex01_attributes = {
+  .name = "myMutex01"
+};
+//uncomment this if you want to use semaphore
+/* Definitions for BinSem */
+/*osSemaphoreId_t BinSemHandle;
+const osSemaphoreAttr_t BinSem_attributes = {
+  .name = "BinSem"
+};*/
 /* USER CODE BEGIN PV */
 __IO uint16_t   aADCxConvertedData[ADC_CONVERTED_DATA_BUFFER_SIZE]; /* ADC conversion results table of regular group, channel on rank1 */
 __IO uint16_t   uhADCxConvertedData_Injected;                        /* ADC conversion result of injected group, channel on rank1 */
@@ -85,6 +132,11 @@ static void MX_ADC1_Init(void);
 static void MX_DAC1_Init(void);
 static void MX_TIM2_Init(void);
 static void MX_I2C1_Init(void);
+void StartDefaultTask(void *argument);
+void StartgetTemp(void *argument);
+void StartsendLCD(void *argument);
+void StartgetPulseW(void *argument);
+
 /* USER CODE BEGIN PFP */
 void blinkLED ();								//blink the led function
 char *scanInp(void);							//scan user input to toggle the state machine
@@ -584,6 +636,7 @@ void startSineW(bool start)
 /******************************************************************/
 
 // lcd display*****************************************************/  something is wrong with this lcd code, need to fix th buffering from flooding while not affecting the pulse width measurement
+
 void lcd_disp(void)
 {
 	char * fltChar = malloc (sizeof (char) * 7);
@@ -604,11 +657,18 @@ void lcd_disp(void)
 	lcd_send_string(" ");*/
 	//lcd_put_cur(1,0);
 	//lcd_send_string("m/s");
-	//HAL_Delay(10);
+	osDelay(500);
 	return;
 }
 /********************************************************************/
 
+ enum State {IDLE = 0, START = 1, CALTIME = 2, STOP = 3}; //define the number of states
+ char State = IDLE;
+
+/* void SemaphorTake ()
+ {
+	 HAL_Delay(200);
+ }*/
 /* USER CODE END 0 */
 
 /**
@@ -619,14 +679,11 @@ int main(void)
 {
 
   /* USER CODE BEGIN 1 */
- enum State {IDLE = 0, START = 1, CALTIME = 2, STOP = 3}; //define the number of states
- char State = IDLE;
 
+	setvbuf(stdin, NULL, _IONBF, 0);
 
- setvbuf(stdin, NULL, _IONBF, 0);
-
-lambda = v_sound/FREQ;  //wavelength
-pathDiff = (DIST/lambda)-0.5;  //destructive interference, L/lambda-0.5=delta_L
+	lambda = v_sound/FREQ;  //wavelength
+	pathDiff = (DIST/lambda)-0.5;  //destructive interference, L/lambda-0.5=delta_L
 
   /* USER CODE END 1 */
 
@@ -682,110 +739,69 @@ pathDiff = (DIST/lambda)-0.5;  //destructive interference, L/lambda-0.5=delta_L
   lcd_put_cur(0,0);
   lcd_send_string("W_vel[m/s]=");
 
+
+
   /* USER CODE END 2 */
+
+  /* Init scheduler */
+  osKernelInitialize();
+  /* Create the mutex(es) */
+  /* creation of myMutex01 */
+  myMutex01Handle = osMutexNew(&myMutex01_attributes);
+
+  /* USER CODE BEGIN RTOS_MUTEX */
+  /* add mutexes, ... */
+  /* USER CODE END RTOS_MUTEX */
+
+  //uncomment this if you want to use semaphore
+  /* Create the semaphores(s) */
+  /* creation of BinSem */
+  //BinSemHandle = osSemaphoreNew(1, 1, &BinSem_attributes);
+
+  /* USER CODE BEGIN RTOS_SEMAPHORES */
+  /* add semaphores, ... */
+  /* USER CODE END RTOS_SEMAPHORES */
+
+  /* USER CODE BEGIN RTOS_TIMERS */
+  /* start timers, add new ones, ... */
+  /* USER CODE END RTOS_TIMERS */
+
+  /* USER CODE BEGIN RTOS_QUEUES */
+  /* add queues, ... */
+  /* USER CODE END RTOS_QUEUES */
+
+  /* Create the thread(s) */
+  /* creation of defaultTask */
+  defaultTaskHandle = osThreadNew(StartDefaultTask, NULL, &defaultTask_attributes);
+
+  /* creation of getTemp */
+  getTempHandle = osThreadNew(StartgetTemp, NULL, &getTemp_attributes);
+
+  /* creation of sendLCD */
+  sendLCDHandle = osThreadNew(StartsendLCD, NULL, &sendLCD_attributes);
+
+  /* creation of getPulseW */
+  getPulseWHandle = osThreadNew(StartgetPulseW, NULL, &getPulseW_attributes);
+
+  /* USER CODE BEGIN RTOS_THREADS */
+  /* add threads, ... */
+  /* USER CODE END RTOS_THREADS */
+
+  /* USER CODE BEGIN RTOS_EVENTS */
+  /* add events, ... */
+  /* USER CODE END RTOS_EVENTS */
+
+  /* Start scheduler */
+  osKernelStart();
+
+  /* We should never get here as control is now taken by the scheduler */
 
   /* Infinite loop */
   /* USER CODE BEGIN WHILE */
   while (1)
   {
 	  //blinkLED();  //call the blinkLED function - disable the blink to save processing power
-	  getTemp();
-	  lcd_disp();
-	  //uart_dma();
 
-	  if (isMeasured)
-	  {
-		  TIM1->CNT = 0;
-		  HAL_TIM_IC_Start_DMA(&htim1, TIM_CHANNEL_1, riseData, numval);
-		  HAL_TIM_IC_Start_DMA(&htim1, TIM_CHANNEL_2, fallData, numval);
-		  isMeasured = 0;
-	  }
-	  //scan for user inpt for the state machine
-
-	 //inp = *scanInp();
-	  //wait again so we don't flood the serial terminal
-	  //HAL_Delay(100);
-	  inp = RxData[0];
-	  if (inp == 'i')
-	  {
-		  State = IDLE;
-	  }
-	  else if (inp == 's')
-	  {
-		  State = START;
-	  }
-	  else if (inp == 't')
-	  {
-		  State = STOP;
-	  }else{};
-
-	  //State Machine starts here
-	  switch (State)
-	  {
-	  case IDLE:
-		  lcd_init();
-		 // uart_buf_len = sprintf(uart_buf, "In IDLE state\r\n");
-		  //printf("In IDLE State\r\n");
-		  //HAL_UART_Transmit(&huart2, (uint8_t *)uart_buf, uart_buf_len, 100);
-		  //HAL_GPIO_WritePin(GPIOB, GPIO_PIN_4, GPIO_PIN_RESET); /// disable nShutdown pin for digital amp
-		  //startSpeaker(0); //turn off speaker
-		  startSineW(0); //using sinewave instead
-		  RxData[0] = '\0';
-
-		  HAL_Delay(1000);
-
-		  break;
-
-	  case START:
-		  //nShutdownDamp = 1; // start digital amplifier
-		  //HAL_GPIO_WritePin(GPIOB, GPIO_PIN_4, GPIO_PIN_SET);
-		  //printf("In START State\r\n"); // print status in terminal
-		  //startSpeaker(1);
-		  startSineW(1); //using sinewave instead
-		  //uart_buf_len = sprintf(uart_buf, "In Start State\r\n");
-		  //HAL_UART_Transmit(&huart2, (uint8_t *)uart_buf, uart_buf_len, 100);
-		  /*the following is use to do pulse output and measure the very beginning****
-		  //HAL_Delay(100);  //wait 20ms
-		  //startSpeaker(0);
-		   */
-		  v_sound = 331+0.61*temp; // only capturing temp once
-		  cal_val = DIST/(pulseW*v_sound);  //get the calibration value from the drift and temperature
-		  RxData[0] = '\0';
-		  State = CALTIME;
-
-		  break;
-
-	  case CALTIME:
-		  //windspeed_ave();
-		  //deltaT = *calTime();
-		  //printf("Delay is = %f\r\n", deltaT);
-		  //HAL_TIM_IC_CaptureCallback(&htim1);
-		  //printf("time1 val = %d \r\n", tim1);
-		  //printf("time2 val = %d \r\n", tim2);
-		  //printf("delay is %ld\r\n", deltaT);
-		  //printf("pulseW is %.8f\r\n", pulseW);
-		  //printf("windspeed is %f\r\n", windspeed);
-		  //HAL_Delay(1000);  //wait 100ms
-		  //State = START;
-
-		  break;
-
-	  case STOP:
-		  //nShutdownDamp = 0; //stop digital amplifier
-		  //startSpeaker(0);
-		  startSineW(0); //using sinewave instead
-		  printf("In STOP State\r\n"); // print status in terminal
-		  HAL_Delay(100);  //wait 100ms
-		  break;
-
-	  default:
-		  /*uart_buf_len = sprintf(uart_buf, "In Default State\r\n");
-  		  HAL_UART_Transmit(&huart2, (uint8_t *)uart_buf, uart_buf_len, 100);*/
-		  printf("In DEFAULT State\r\n"); // print status in terminal
-		  HAL_Delay(100);  //wait 100ms
-		  break;
-
-	  }
 
     /* USER CODE END WHILE */
 
@@ -1091,7 +1107,7 @@ static void MX_TIM2_Init(void)
   htim2.Instance = TIM2;
   htim2.Init.Prescaler = 17-1;
   htim2.Init.CounterMode = TIM_COUNTERMODE_UP;
-  htim2.Init.Period = 4-1;
+  htim2.Init.Period = 3;
   htim2.Init.ClockDivision = TIM_CLOCKDIVISION_DIV1;
   htim2.Init.AutoReloadPreload = TIM_AUTORELOAD_PRELOAD_DISABLE;
   if (HAL_TIM_Base_Init(&htim2) != HAL_OK)
@@ -1250,25 +1266,25 @@ static void MX_DMA_Init(void)
 
   /* DMA interrupt init */
   /* DMA1_Channel1_IRQn interrupt configuration */
-  HAL_NVIC_SetPriority(DMA1_Channel1_IRQn, 0, 0);
+  HAL_NVIC_SetPriority(DMA1_Channel1_IRQn, 5, 0);
   HAL_NVIC_EnableIRQ(DMA1_Channel1_IRQn);
   /* DMA1_Channel2_IRQn interrupt configuration */
-  HAL_NVIC_SetPriority(DMA1_Channel2_IRQn, 0, 0);
+  HAL_NVIC_SetPriority(DMA1_Channel2_IRQn, 5, 0);
   HAL_NVIC_EnableIRQ(DMA1_Channel2_IRQn);
   /* DMA1_Channel3_IRQn interrupt configuration */
-  HAL_NVIC_SetPriority(DMA1_Channel3_IRQn, 0, 0);
+  HAL_NVIC_SetPriority(DMA1_Channel3_IRQn, 5, 0);
   HAL_NVIC_EnableIRQ(DMA1_Channel3_IRQn);
   /* DMA1_Channel4_IRQn interrupt configuration */
-  HAL_NVIC_SetPriority(DMA1_Channel4_IRQn, 0, 0);
+  HAL_NVIC_SetPriority(DMA1_Channel4_IRQn, 5, 0);
   HAL_NVIC_EnableIRQ(DMA1_Channel4_IRQn);
   /* DMA1_Channel5_IRQn interrupt configuration */
-  HAL_NVIC_SetPriority(DMA1_Channel5_IRQn, 0, 0);
+  HAL_NVIC_SetPriority(DMA1_Channel5_IRQn, 5, 0);
   HAL_NVIC_EnableIRQ(DMA1_Channel5_IRQn);
   /* DMA2_Channel1_IRQn interrupt configuration */
-  HAL_NVIC_SetPriority(DMA2_Channel1_IRQn, 0, 0);
+  HAL_NVIC_SetPriority(DMA2_Channel1_IRQn, 5, 0);
   HAL_NVIC_EnableIRQ(DMA2_Channel1_IRQn);
   /* DMA2_Channel2_IRQn interrupt configuration */
-  HAL_NVIC_SetPriority(DMA2_Channel2_IRQn, 0, 0);
+  HAL_NVIC_SetPriority(DMA2_Channel2_IRQn, 5, 0);
   HAL_NVIC_EnableIRQ(DMA2_Channel2_IRQn);
 
 }
@@ -1320,6 +1336,213 @@ void HAL_ADC_ConvCpltCallback(ADC_HandleTypeDef *hadc)
 
 
 /* USER CODE END 4 */
+
+/* USER CODE BEGIN Header_StartDefaultTask */
+/**
+  * @brief  Function implementing the defaultTask thread.
+  * @param  argument: Not used
+  * @retval None
+  */
+/* USER CODE END Header_StartDefaultTask */
+void StartDefaultTask(void *argument)
+{
+  /* USER CODE BEGIN 5 */
+  /* Infinite loop */
+  for(;;)
+  {
+	  osMutexAcquire(myMutex01Handle, osWaitForever);
+	  //osSemaphoreWait(BinSemHandle, osWaitForever);
+	  //getTemp();
+	  	  //lcd_disp();
+	  	  //uart_dma();
+
+	  	  //scan for user inpt for the state machine
+
+	  	 //inp = *scanInp();
+	  	  //wait again so we don't flood the serial terminal
+	  	  //HAL_Delay(100);
+	  	  inp = RxData[0];
+	  	  if (inp == 'i')
+	  	  {
+	  		  State = IDLE;
+	  	  }
+	  	  else if (inp == 's')
+	  	  {
+	  		  State = START;
+	  	  }
+	  	  else if (inp == 't')
+	  	  {
+	  		  State = STOP;
+	  	  }else{};
+
+	  	  //State Machine starts here
+	  	  switch (State)
+	  	  {
+	  	  case IDLE:
+	  		  //lcd_init();
+	  		 // uart_buf_len = sprintf(uart_buf, "In IDLE state\r\n");
+	  		  //printf("In IDLE State\r\n");
+	  		  //HAL_UART_Transmit(&huart2, (uint8_t *)uart_buf, uart_buf_len, 100);
+	  		  //HAL_GPIO_WritePin(GPIOB, GPIO_PIN_4, GPIO_PIN_RESET); /// disable nShutdown pin for digital amp
+	  		  //startSpeaker(0); //turn off speaker
+	  		  startSineW(0); //using sinewave instead
+	  		  RxData[0] = '\0';
+
+	  		  osDelay(1000);
+
+	  		  break;
+
+	  	  case START:
+	  		  //nShutdownDamp = 1; // start digital amplifier
+	  		  //HAL_GPIO_WritePin(GPIOB, GPIO_PIN_4, GPIO_PIN_SET);
+	  		  //printf("In START State\r\n"); // print status in terminal
+	  		  //startSpeaker(1);
+	  		  startSineW(1); //using sinewave instead
+	  		  //uart_buf_len = sprintf(uart_buf, "In Start State\r\n");
+	  		  //HAL_UART_Transmit(&huart2, (uint8_t *)uart_buf, uart_buf_len, 100);
+	  		  /*the following is use to do pulse output and measure the very beginning****
+	  		  //HAL_Delay(100);  //wait 20ms
+	  		  //startSpeaker(0);
+	  		   */
+	  		  v_sound = 331+0.61*temp; // only capturing temp once
+	  		  cal_val = DIST/(pulseW*v_sound);  //get the calibration value from the drift and temperature
+	  		 // lcd_init();
+	  		  RxData[0] = '\0';
+	  		  State = CALTIME;
+
+	  		  break;
+
+	  	  case CALTIME:
+	  		  //windspeed_ave();
+	  		  //deltaT = *calTime();
+	  		  //printf("Delay is = %f\r\n", deltaT);
+	  		  //HAL_TIM_IC_CaptureCallback(&htim1);
+	  		  //printf("time1 val = %d \r\n", tim1);
+	  		  //printf("time2 val = %d \r\n", tim2);
+	  		  //printf("delay is %ld\r\n", deltaT);
+	  		  //printf("pulseW is %.8f\r\n", pulseW);
+	  		  //printf("windspeed is %f\r\n", windspeed);
+	  		  //HAL_Delay(1000);  //wait 100ms
+	  		  //State = START;
+
+	  		  break;
+
+	  	  case STOP:
+	  		  //nShutdownDamp = 0; //stop digital amplifier
+	  		  //startSpeaker(0);
+	  		  startSineW(0); //using sinewave instead
+	  		  printf("In STOP State\r\n"); // print status in terminal
+	  		  HAL_Delay(100);  //wait 100ms
+	  		  break;
+
+	  	  default:
+	  		  /*uart_buf_len = sprintf(uart_buf, "In Default State\r\n");
+	    		  HAL_UART_Transmit(&huart2, (uint8_t *)uart_buf, uart_buf_len, 100);*/
+	  		  printf("In DEFAULT State\r\n"); // print status in terminal
+	  		  HAL_Delay(100);  //wait 100ms
+	  		  break;
+
+	  	  }
+	  	  //osSemaphoreRelease(BinSemHandle);
+	  	osMutexRelease(myMutex01Handle);
+    osDelay(100);
+  }
+  /* USER CODE END 5 */
+}
+
+/* USER CODE BEGIN Header_StartgetTemp */
+/**
+* @brief Function implementing the getTemp thread.
+* @param argument: Not used
+* @retval None
+*/
+/* USER CODE END Header_StartgetTemp */
+void StartgetTemp(void *argument)
+{
+  /* USER CODE BEGIN StartgetTemp */
+  /* Infinite loop */
+  while(1)
+  {
+	osMutexAcquire(myMutex01Handle, osWaitForever);
+	//osSemaphoreWait(BinSemHandle, osWaitForever); // it is osSemaphoreAcquire instead of osSemaphoreWait
+	getTemp();
+	// osSemaphoreRelease(BinSemHandle);
+	osMutexRelease(myMutex01Handle);
+    osDelay(100);
+  }
+  /* USER CODE END StartgetTemp */
+}
+
+/* USER CODE BEGIN Header_StartsendLCD */
+/**
+* @brief Function implementing the sendLCD thread.
+* @param argument: Not used
+* @retval None
+*/
+/* USER CODE END Header_StartsendLCD */
+void StartsendLCD(void *argument)
+{
+  /* USER CODE BEGIN StartsendLCD */
+  /* Infinite loop */
+  while(1)
+  {
+	osMutexAcquire(myMutex01Handle, osWaitForever);
+	//osSemaphoreWait(BinSemHandle, osWaitForever); // it is osSemaphoreAcquire instead of osSemaphoreWait
+	lcd_disp();
+	//osSemaphoreRelease(BinSemHandle);
+	osMutexRelease(myMutex01Handle);
+    osDelay(100);
+  }
+  /* USER CODE END StartsendLCD */
+}
+
+/* USER CODE BEGIN Header_StartgetPulseW */
+/**
+* @brief Function implementing the getPulseW thread.
+* @param argument: Not used
+* @retval None
+*/
+/* USER CODE END Header_StartgetPulseW */
+void StartgetPulseW(void *argument)
+{
+  /* USER CODE BEGIN StartgetPulseW */
+  /* Infinite loop */
+  for(;;)
+  {
+	  osMutexAcquire(myMutex01Handle, osWaitForever);
+	  if (isMeasured)
+	  {
+		  TIM1->CNT = 0;
+		  HAL_TIM_IC_Start_DMA(&htim1, TIM_CHANNEL_1, riseData, numval);
+		  HAL_TIM_IC_Start_DMA(&htim1, TIM_CHANNEL_2, fallData, numval);
+		  isMeasured = 0;
+	  }
+	  osMutexRelease(myMutex01Handle);
+	  osDelay(1);
+  }
+  /* USER CODE END StartgetPulseW */
+}
+
+/**
+  * @brief  Period elapsed callback in non blocking mode
+  * @note   This function is called  when TIM3 interrupt took place, inside
+  * HAL_TIM_IRQHandler(). It makes a direct call to HAL_IncTick() to increment
+  * a global variable "uwTick" used as application time base.
+  * @param  htim : TIM handle
+  * @retval None
+  */
+void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef *htim)
+{
+  /* USER CODE BEGIN Callback 0 */
+
+  /* USER CODE END Callback 0 */
+  if (htim->Instance == TIM3) {
+    HAL_IncTick();
+  }
+  /* USER CODE BEGIN Callback 1 */
+
+  /* USER CODE END Callback 1 */
+}
 
 /**
   * @brief  This function is executed in case of error occurrence.

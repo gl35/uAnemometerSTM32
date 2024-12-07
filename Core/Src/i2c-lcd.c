@@ -118,8 +118,7 @@ void lcd_init (void)
 	lcd_send_cmd (0x08); //Display on/off control --> D=0,C=0, B=0  ---> display off
 	HAL_Delay(1);
 	lcd_send_cmd (0x01);  // clear display
-	HAL_Delay(1);
-	HAL_Delay(1);
+	HAL_Delay(2);
 	lcd_send_cmd (0x06); //Entry mode set --> I/D = 1 (increment cursor) & S = 0 (no shift)
 	HAL_Delay(1);
 	lcd_send_cmd (0x0C); //Display on/off control --> D = 1, C and B = 0. (Cursor and blink, last two bits)
