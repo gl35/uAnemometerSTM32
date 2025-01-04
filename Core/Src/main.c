@@ -98,18 +98,10 @@ const osThreadAttr_t sendLCD_attributes = {
   .stack_size = 256 * 4
 };
 /* Definitions for getPulseW */
-osThreadId_t getPulseWHandle;
+/*osThreadId_t getPulseWHandle;
 const osThreadAttr_t getPulseW_attributes = {
   .name = "getPulseW",
   .priority = (osPriority_t) osPriorityRealtime,
-  .stack_size = 256 * 4
-};
-
-/* Definitions for storePulseW_arr */
-/*osThreadId_t storePulseW_arrHandle;
-const osThreadAttr_t storePulseW_arr_attributes = {
-  .name = "storePulseW_arr",
-  .priority = (osPriority_t) osPriorityAboveNormal,
   .stack_size = 256 * 4
 };*/
 /* Definitions for myMutex01 */
@@ -117,12 +109,11 @@ osMutexId_t myMutex01Handle;
 const osMutexAttr_t myMutex01_attributes = {
   .name = "myMutex01"
 };
-//uncomment this if you want to use semaphore
 /* Definitions for BinSem */
-/*osSemaphoreId_t BinSemHandle;
+osSemaphoreId_t BinSemHandle;
 const osSemaphoreAttr_t BinSem_attributes = {
   .name = "BinSem"
-};*/
+};
 /* USER CODE BEGIN PV */
 __IO uint16_t   aADCxConvertedData[ADC_CONVERTED_DATA_BUFFER_SIZE]; /* ADC conversion results table of regular group, channel on rank1 */
 __IO uint16_t   uhADCxConvertedData_Injected;                        /* ADC conversion result of injected group, channel on rank1 */
@@ -146,7 +137,6 @@ void StartDefaultTask(void *argument);
 void StartgetTemp(void *argument);
 void StartsendLCD(void *argument);
 void StartgetPulseW(void *argument);
-//void StartstorePulseW_arr(void *argument);
 
 /* USER CODE BEGIN PFP */
 void blinkLED ();								//blink the led function
@@ -163,7 +153,7 @@ void adc_dma(void);						//adc dma
 #define __USE_C99_MATH
 
 //data buffer for rising and falling DMA
-#define numval 500
+#define numval 1
 #define TIMCLOCK 170000000
 #define PSCALAR 16
 #define MIN(a,b) ((a) < (b) ? (a) : (b))
@@ -429,143 +419,15 @@ float *delta_T_alg (float deltaT)
 	return &deltaT_pre;
 }
 
-
+float pll_pulsePeriod;
 //Tim1 input capture callback function for calculating the pulseW
 void HAL_TIM_IC_CaptureCallback(TIM_HandleTypeDef *htim)
 {
+	/*The way it works, is that rising edge of PWM signal on TIM1_CH1 pin captures PWM period in CC1 and resets timer to 0. The falling edge of the 	same signal captures pulse length in CC2. The DMA then transfers captured values into two memory locations. Since DMA is configured in circular 	mode next capture will override previous values in the same locations.*/
+	pll_pulsePeriod = HAL_TIM_ReadCapturedValue(htim, TIM_CHANNEL_1);  //TIM1_CH1 pin captures PWM period in CC1 and resets timer to 0.
+	deltaT	= HAL_TIM_ReadCapturedValue(htim, TIM_CHANNEL_2); //The falling edge of the same signal captures pulse length in CC2
+	pulseW = deltaT * (float)(timeFactor/1000000000.f);
 
-	//if the interrupt is triggered by 1st Channel
-	if (htim->Channel == HAL_TIM_ACTIVE_CHANNEL_1)
-	{
-		riseCaptured = 1;
-		tim1 = HAL_TIM_ReadCapturedValue(htim, TIM_CHANNEL_1);
-	}
-	//if the interrupt is triggered by 2nd Channel
-	else if (htim->Channel == HAL_TIM_ACTIVE_CHANNEL_2)
-	{
-		fallCaptured = 1;
-		tim2 = HAL_TIM_ReadCapturedValue(htim, TIM_CHANNEL_2);
-	}
-
-	if ((riseCaptured) && (fallCaptured))
-	{
-		if (tim2 > tim1)
-		{
-			deltaT = tim2 - tim1;
-			pulseW = deltaT * (float)(timeFactor/1000000000.f);
-		}
-		else if (tim1 > tim2)
-		{
-			deltaT = ((0xffff - tim1) + tim2) +1;
-			pulseW = deltaT * (float)(timeFactor/1000000000.f);
-		}
-		else
-		{
-			Error_Handler();
-		}
-
-/*
-
-		// calculate the reference clock
-		//float refClock = TIMCLOCK/(PSCALAR+1);
-		int indxr = 0, indxf = 0, countr = 0, countrf = 0;
-		float riseavg = 0,  rfavg = 0;
-		 //In case of high Frequencies, the DMA sometimes captures 0's in the beginning.
-		// increment the index until some useful data shows up
-
-		while (riseData[indxr] == 0) indxr++;
-
-		 //Again at very high frequencies, sometimes the values don't change
-		//So we will wait for the update among the values
-
-		while ( (MIN( (riseData[indxr+1]-riseData[indxr]), (riseData[indxr+2]-riseData[indxr+1]) ) ) == 0) indxr++;
-		 //riseavg is the difference in the 2 consecutive rise Time
-
-		 //Assign a start value to riseavg
-		riseavg += MIN((riseData[indxr+1]-riseData[indxr]), (riseData[indxr+2]-riseData[indxr+1]));
-		indxr++;
-		countr++;
-		// start adding the values to the riseavg
-		while (indxr < (numval))
-		{
-			riseavg += MIN((riseData[indxr+1]-riseData[indxr]), riseavg/countr);
-			countr++;
-			indxr++;
-		}
-		// Find the average riseavg, the average time between 2 RISE
-		riseavg = riseavg/countr;
-		indxr = 0;
-		 //The calculation for the Falling pulse on second channel
-		 //If the fall time is lower than rise time,
-		// Then there must be some error and we will increment
-		 // both, until the error is gone
-
-		if (fallData[indxf] < riseData[indxr])
-		{
-			indxf+=2;
-			indxr+=2;
-			while (fallData[indxf] < riseData[indxr]) indxf++;
-		}
-
-		else if (fallData[indxf] > riseData[indxr])
-		{
-			indxf+=2;
-			indxr+=2;
-			while (fallData[indxf] > riseData[indxr+1]) indxr++;
-		}
-
-		// The method used for the calculation below is as follows:
-		//If Fall time < Rise Time, increment Fall counter
-		//If Fall time - Rise Time is in between 0 and (difference between 2 Rise times), then its a success
-		//If fall time > Rise time, but is also > (difference between 2 Rise times), then increment Rise Counter
-
-		while ((indxf < (numval)) && (indxr < (numval)))
-		{
-			//If the Fall time is lower than rise time, increment the fall indx
-			while ((int16_t)(fallData[indxf]-riseData[indxr]) < 0)
-			{
-				indxf++;
-			}
-			// If the Difference in fall time and rise time is >0 and less than rise average,
-			// Then we will register it as a success and increment the countrf (the number of successes)
-
-			if (((int16_t)(fallData[indxf]-riseData[indxr]) >= 0) && (((int16_t)(fallData[indxf]-riseData[indxr]) <= riseavg)))
-			{
-				rfavg += MIN((fallData[indxf]-riseData[indxr]), (fallData[indxf+1]-riseData[indxr+1]));
-				indxf++;
-				indxr++;
-				countrf++;
-			}
-			else
-			{
-				indxr++;
-			}
-		}
-		//Calculate the Average time between 2 Rise
-		rfavg = rfavg/countrf;
-
-		//v_sound = 331+0.61*temp;
-		//pulseW = deltaT * timeFactor/1000000000;
-		pulseW = (rfavg)*((float)(timeFactor));  // ns
-
-		//float sum = 0;
-		// if the magnitude of the pulse width outside of the range 1us to 40us, then do not do this
-
-		if (pulseW > 0.000008 && pulseW <= 0.000180)
-		{
-			//pulseWavg(pulseW);
-			windspeed = DIST/(pulseW*cal_val) - v_sound;
-		}
-*/
-
-//		deltaT_real = *delta_T_alg(pulseW);
-		//windspeed = dist/((pulseW)*cali_val);  //d/(t*path diff)
-//		windspeed = dist/(deltaT_real*cal_val) - v_sound; //might need to make this an array and take the average
-
-		riseCaptured = 0;
-		fallCaptured = 0;
-		isMeasured = 1;
-		}
 	}
 
 
@@ -726,34 +588,34 @@ int main(void)
   /* MCU Configuration--------------------------------------------------------*/
 
   /* Reset of all peripherals, Initializes the Flash interface and the Systick. */
-	HAL_Init();
+  HAL_Init();
 
   /* USER CODE BEGIN Init */
 
   /* USER CODE END Init */
 
   /* Configure the system clock */
-	SystemClock_Config();
+  SystemClock_Config();
 
   /* USER CODE BEGIN SysInit */
 
   /* USER CODE END SysInit */
 
   /* Initialize all configured peripherals */
-	MX_GPIO_Init();
-	MX_DMA_Init();
-	MX_USART2_UART_Init();
-	MX_TIM4_Init();
-	MX_TIM1_Init();
-	MX_ADC1_Init();
-	MX_DAC1_Init();
-	MX_TIM2_Init();
-	MX_I2C1_Init();
+  MX_GPIO_Init();
+  MX_DMA_Init();
+  MX_USART2_UART_Init();
+  MX_TIM4_Init();
+  MX_TIM1_Init();
+  MX_ADC1_Init();
+  MX_DAC1_Init();
+  MX_TIM2_Init();
+  MX_I2C1_Init();
   /* USER CODE BEGIN 2 */
   //HAL_TIM_IC_Start_IT(&htim1, TIM_CHANNEL_1);
 
-	HAL_TIM_IC_Start_DMA(&htim1, TIM_CHANNEL_1, riseData, numval);
-	HAL_TIM_IC_Start_DMA(&htim1, TIM_CHANNEL_2, fallData, numval);
+	HAL_TIM_IC_Start_DMA(&htim1, TIM_CHANNEL_1, riseData, numval); //this starts the DMA process for TIM1 input capture - CC1 is period
+	HAL_TIM_IC_Start_DMA(&htim1, TIM_CHANNEL_2, fallData, numval); //this starts the DMA process for TIM1 input capture - CC2 is pulse duration
 
   //say something
   //uart_buf_len = sprintf(uart_buf, "Timer test\r\n");
@@ -790,10 +652,9 @@ int main(void)
   /* add mutexes, ... */
   /* USER CODE END RTOS_MUTEX */
 
-  //uncomment this if you want to use semaphore
   /* Create the semaphores(s) */
   /* creation of BinSem */
-  //BinSemHandle = osSemaphoreNew(1, 1, &BinSem_attributes);
+  BinSemHandle = osSemaphoreNew(1, 1, &BinSem_attributes);
 
   /* USER CODE BEGIN RTOS_SEMAPHORES */
   /* add semaphores, ... */
@@ -818,10 +679,7 @@ int main(void)
   sendLCDHandle = osThreadNew(StartsendLCD, NULL, &sendLCD_attributes);
 
   /* creation of getPulseW */
-  getPulseWHandle = osThreadNew(StartgetPulseW, NULL, &getPulseW_attributes);
-
-  /* creation of StartstorePulseW_arr */
-  //storePulseW_arrHandle = osThreadNew(StartstorePulseW_arr, NULL, &storePulseW_arr_attributes);
+//  getPulseWHandle = osThreadNew(StartgetPulseW, NULL, &getPulseW_attributes);
 
   /* USER CODE BEGIN RTOS_THREADS */
   /* add threads, ... */
@@ -1072,6 +930,7 @@ static void MX_TIM1_Init(void)
   /* USER CODE END TIM1_Init 0 */
 
   TIM_ClockConfigTypeDef sClockSourceConfig = {0};
+  TIM_SlaveConfigTypeDef sSlaveConfig = {0};
   TIM_MasterConfigTypeDef sMasterConfig = {0};
   TIM_IC_InitTypeDef sConfigIC = {0};
 
@@ -1096,6 +955,14 @@ static void MX_TIM1_Init(void)
     Error_Handler();
   }
   if (HAL_TIM_IC_Init(&htim1) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  sSlaveConfig.SlaveMode = TIM_SLAVEMODE_RESET;
+  sSlaveConfig.InputTrigger = TIM_TS_TI1FP1;
+  sSlaveConfig.TriggerPolarity = TIM_INPUTCHANNELPOLARITY_RISING;
+  sSlaveConfig.TriggerFilter = 0;
+  if (HAL_TIM_SlaveConfigSynchro(&htim1, &sSlaveConfig) != HAL_OK)
   {
     Error_Handler();
   }
@@ -1146,9 +1013,9 @@ static void MX_TIM2_Init(void)
 
   /* USER CODE END TIM2_Init 1 */
   htim2.Instance = TIM2;
-  htim2.Init.Prescaler = 1-1;
+  htim2.Init.Prescaler = 17-1;
   htim2.Init.CounterMode = TIM_COUNTERMODE_UP;
-  htim2.Init.Period = 77-1;
+  htim2.Init.Period = 3;
   htim2.Init.ClockDivision = TIM_CLOCKDIVISION_DIV1;
   htim2.Init.AutoReloadPreload = TIM_AUTORELOAD_PRELOAD_DISABLE;
   if (HAL_TIM_Base_Init(&htim2) != HAL_OK)
@@ -1478,6 +1345,7 @@ void StartDefaultTask(void *argument)
 	  		  lcd_init();
 	  		  lcd_put_cur(0,0);
 	  		  lcd_send_string("W_vel[m/s]=");
+	  		  HAL_TIM_PWM_Stop_DMA(&htim1, TIM_CHANNEL_1);
 	  		  HAL_Delay(100);  //wait 100ms
 	  		  break;
 
@@ -1549,43 +1417,27 @@ void StartsendLCD(void *argument)
 * @retval None
 */
 /* USER CODE END Header_StartgetPulseW */
-void StartgetPulseW(void *argument)
+/*void StartgetPulseW(void *argument)
 {
-  /* USER CODE BEGIN StartgetPulseW */
-  /* Infinite loop */
+   USER CODE BEGIN StartgetPulseW
+   Infinite loop
   for(;;)
   {
 	  osMutexAcquire(myMutex01Handle, osWaitForever);
 	  if (isMeasured)
 	  {
 		  TIM1->CNT = 0;
-		  HAL_TIM_IC_Start_DMA(&htim1, TIM_CHANNEL_1, riseData, numval);
-		  HAL_TIM_IC_Start_DMA(&htim1, TIM_CHANNEL_2, fallData, numval);
-		  isMeasured = 0;
+		 HAL_TIM_IC_Start_DMA(&htim1, TIM_CHANNEL_1, riseData, numval);
+		 HAL_TIM_IC_Start_DMA(&htim1, TIM_CHANNEL_2, fallData, numval);
+	  isMeasured = 0;
 	  }
 
 	  osMutexRelease(myMutex01Handle);
 	  osDelay(10);
   }
-  /* USER CODE END StartgetPulseW */
-}
-
-/* USER CODE BEGIN Header_StartstorePulseW_arr */
-/*void StartstorePulseW_arr(void *argument)
-{
-	for(;;)
-	{
-		osMutexAcquire(myMutex01Handle, osWaitForever);
-		pulseWavg(pulseW);
-		if (pulseW > 0.000008 && pulseW <= 0.000040)
-		{
-			//pulseWavg(pulseW);
-			windspeed = DIST/(pulseW*cal_val) - v_sound;
-		}
-		osMutexRelease(myMutex01Handle);
-	}
+   USER CODE END StartgetPulseW
 }*/
-/* USER CODE END Header_StartstorePulseW_arr */
+
 /**
   * @brief  Period elapsed callback in non blocking mode
   * @note   This function is called  when TIM3 interrupt took place, inside
