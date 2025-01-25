@@ -157,6 +157,7 @@ void adc_dma(void);						//adc dma
 #define TIMCLOCK 170000000
 #define PSCALAR 16
 #define MIN(a,b) ((a) < (b) ? (a) : (b))
+#define MAX(a,b) ((a) > (b) ? (a) : (b))
 
 int riseCaptured = 0;
 int fallCaptured = 0;
@@ -178,7 +179,7 @@ float deltaT = 0;
 float pulseW = 0;
 
 #define DIST  0.02 					// dist = 0.02m
-#define FREQ 11000.0  				//11khz from the pll chip if two jk in series
+#define FREQ 22000.0  				//11khz from the pll chip  , but sound freq is 22khz
 float cal_val = 0;						//calibrated value - usually its the path difference.
 float v_sound = 343; 				// speed of sound  is 343m/s, will need to incorporate temperature here,  c = 331+0.61T,
 float lambda = 0;						//wavelength of the sound depending on temperature
@@ -358,21 +359,30 @@ GETCHAR_PROTOTYPE
 
 void pulseWavg (float pulse_in);
 //calculate the pulseW average  - this is to remove the noise and jittering in the pulse - oct 22, 2024
-float pulseW_arr[10];
+float pulseW_arr[100];
 float pulseW_avg = 0;
 uint8_t i = 0 ;float sum = 0;
 float pulseW_base = 0;
 float realDelay = 0;
+float pulseW_min = 0;
+float pulseW_min_arr[10];
+float pulseW_max = 0;
+float pulseW_max_arr[10];
 void pulseWavg (float pulse_in)
 {
 	if (pulse_in >= 0.000008 && pulse_in <=0.000180)
 	{
-		for (i = 0; i < 10; i++)
+		for (i = 0; i < 100; i++)
 		{
 			pulseW_arr[i] =roundf( pulse_in*10000000)/10000000;
 			sum += pulseW_arr[i];
+			//pulseW_min = MIN(pulseW_arr[i], pulseW_arr[i-1]);
+			//pulseW_min_arr[i] = pulseW_min;
+			//pulseW_max = MAX (pulseW_arr[i], pulseW_arr[i-1]);
+			//pulseW_max_arr[i] = pulseW_max;
 		}
-		pulseW_avg = sum/10.f;
+		pulseW_avg = sum/100.f;
+
 
 		//realDelay = *delta_T_alg(pulseW_avg);
 
@@ -511,7 +521,7 @@ uint32_t sine_val[100];
 #define PI 3.1415926
 float dac_val = 1.2;
 uint32_t var;
-
+float k = 0.0; // wave number
 void startSineW(bool start)
 {
 	if (!start)
@@ -535,10 +545,11 @@ void startSineW(bool start)
 
 void lcd_disp(void)
 {
-	char * fltChar = malloc (sizeof (char) * 8);
+	//char * fltChar = malloc (sizeof (char) * 8);
 	//char *fltChar2 = malloc (sizeof(char) * 7);
+
 	//lcd_send_cmd (0x80);
-	//char fltChar [7];
+	char fltChar [8];
 	sprintf(fltChar, "%.4f", windspeed);
 	lcd_put_cur(0,11);
 
@@ -1003,6 +1014,7 @@ static void MX_TIM2_Init(void)
 
   /* USER CODE BEGIN TIM2_Init 0 */
 	//this is used to generate a sinewave, f_sys_clk/(prescalar * 100)/4 = 25khz
+	//x*y = 77, prescalar = 1, period =77 to get 22khz,
   /* USER CODE END TIM2_Init 0 */
 
   TIM_ClockConfigTypeDef sClockSourceConfig = {0};
@@ -1013,9 +1025,9 @@ static void MX_TIM2_Init(void)
 
   /* USER CODE END TIM2_Init 1 */
   htim2.Instance = TIM2;
-  htim2.Init.Prescaler = 17-1;
+  htim2.Init.Prescaler = 11-1;
   htim2.Init.CounterMode = TIM_COUNTERMODE_UP;
-  htim2.Init.Period = 3;
+  htim2.Init.Period = 7-1;
   htim2.Init.ClockDivision = TIM_CLOCKDIVISION_DIV1;
   htim2.Init.AutoReloadPreload = TIM_AUTORELOAD_PRELOAD_DISABLE;
   if (HAL_TIM_Base_Init(&htim2) != HAL_OK)
@@ -1312,10 +1324,13 @@ void StartDefaultTask(void *argument)
 	  		  //HAL_Delay(100);  //wait 20ms
 	  		  //startSpeaker(0);
 	  		   */
-	  		  v_sound = roundf ((331+0.61*temp)*1000)/1000; // only capturing temp once
+	  		  v_sound = roundf ((331.5+0.607*temp)*1000)/1000; // only capturing temp once
 
 	  		  pulseW_base = pulseW_avg;
 	  		  cal_val = DIST/(pulseW_avg*v_sound);  //get the calibration value from the drift and temperature
+	  		  lambda = v_sound / FREQ;
+	  		  k = DIST / lambda;
+	  		  //cal_val = DIST*FREQ/343.f;
 	  		 // lcd_init();
 	  		  RxData[0] = '\0';
 	  		  State = CALTIME;
