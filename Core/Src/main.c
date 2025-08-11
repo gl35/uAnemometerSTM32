@@ -387,7 +387,7 @@ void pulseWavg (float pulse_in)
 		//realDelay = *delta_T_alg(pulseW_avg);
 
 		//windspeed = roundf (fabs((DIST/(realDelay * cal_val)) - v_sound)*10)/10; //abs converts to int
-		windspeed = roundf((fabs(DIST/(pulseW_avg*cal_val) - DIST/(pulseW_base*cal_val)))*10)/10;
+		windspeed = roundf((fabs(DIST/(pulseW_avg*cal_val) - DIST/(pulseW_base*cal_val)))*100)/100;
 		sum = 0;
 /*		if ( i < 10)
 		{
@@ -1324,7 +1324,7 @@ void StartDefaultTask(void *argument)
 	  		  //HAL_Delay(100);  //wait 20ms
 	  		  //startSpeaker(0);
 	  		   */
-	  		  v_sound = roundf ((331.5+0.607*temp)*1000)/1000; // only capturing temp once
+	  		  v_sound = roundf ((331.5+0.607*temp)*10000)/10000; // only capturing temp once
 
 	  		  pulseW_base = pulseW_avg;
 	  		  cal_val = DIST/(pulseW_avg*v_sound);  //get the calibration value from the drift and temperature
