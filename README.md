@@ -93,6 +93,6 @@ usAnemometer/
 
 ## Author
 
-**Gene Li, EIT** — Mechatronic Systems Engineer  
+**Gene Li, EIT** — Mechatronic/Electrical/Electronics Engineer  
 MASc, Simon Fraser University  
 [GitHub](https://github.com/gl35)
